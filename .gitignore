@@ -1,6 +1,9 @@
 # PocketBase data is stored on the Railway volume, not in the repo.
 pb_data/
 
+# Dependencies (installed only for the Railway IaC CLI tooling)
+node_modules/
+
 # Local overrides
 .env
 .env.local

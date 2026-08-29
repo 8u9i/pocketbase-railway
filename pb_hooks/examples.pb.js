@@ -7,8 +7,6 @@
 // These are commented out by default so the template works out of the box.
 // Uncomment the ones you want, redeploy, and they take effect.
 
-/// <reference path="../pb_data/types.d.ts" />
-
 // ---------------------------------------------------------------------------
 // Example 1: a public status endpoint (no auth required).
 // ---------------------------------------------------------------------------
