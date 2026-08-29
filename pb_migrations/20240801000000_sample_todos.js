@@ -37,18 +37,15 @@ migrate(
 
     // Seed a few rows so the API and admin UI have something to show on first boot.
     const todos = app.findCollectionByNameOrId("todos");
-    app.save(
-      app.createRecord(todos, {
-        title: "Deploy PocketBase to Railway",
-        done: true,
-      })
-    );
-    app.save(
-      app.createRecord(todos, {
-        title: "Build something without a backend",
-        done: false,
-      })
-    );
+    for (const seed of [
+      { title: "Deploy PocketBase to Railway", done: true },
+      { title: "Build something without a backend", done: false },
+    ]) {
+      const record = new Record(todos);
+      record.set("title", seed.title);
+      record.set("done", seed.done);
+      app.save(record);
+    }
   },
   (app) => {
     // Rollback: drop the collection (and its records) if the migration is reverted.
