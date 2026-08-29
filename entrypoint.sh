@@ -25,7 +25,7 @@ if [ "${PB_SKIP_ADMIN}" != "true" ]; then
   # If any superuser already exists (first boot already happened), this is a
   # no-op and the command exits non-zero, which is expected and ignored.
   /pb/pocketbase superuser create "${PB_ADMIN_EMAIL}" "${PB_ADMIN_PASSWORD}" \
-    --dir="${PB_DATA_DIR}" --yes >/dev/null 2>&1 || true
+    --dir="${PB_DATA_DIR}" >/dev/null 2>&1 || true
   echo "==> Superuser ready (login at /_/ with ${PB_ADMIN_EMAIL})."
 fi
 
