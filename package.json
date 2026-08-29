@@ -1,0 +1,13 @@
+{
+  "name": "pocketbase-railway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PocketBase on Railway - one-click backend (SQLite, auth, storage, realtime, admin UI)",
+  "scripts": {
+    "plan": "railway config plan",
+    "apply": "railway config apply"
+  },
+  "devDependencies": {
+    "railway": "^3.11.0"
+  }
+}

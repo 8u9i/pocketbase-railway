@@ -1,0 +1,11 @@
+# PocketBase data is stored on the Railway volume, not in the repo.
+pb_data/
+
+# Local overrides
+.env
+.env.local
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp

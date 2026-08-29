@@ -1,0 +1,7 @@
+.git
+.gitignore
+.env
+.env.local
+README.md
+*.md
+pb_data/
