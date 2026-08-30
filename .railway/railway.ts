@@ -24,6 +24,10 @@ const pocketbase = service("pocketbase", {
     // Beginner-friendly defaults (see README). Replace with real credentials.
     PB_ADMIN_EMAIL: "admin@example.com",
     PB_ADMIN_PASSWORD: "changeme123",
+    // Public URL for email links, OAuth2 redirects, file URLs, and the
+    // dashboard "App URL". Auto-derived from Railway's public domain by
+    // default; set a custom domain here when you attach one.
+    PB_PUBLIC_URL: "https://${{RAILWAY_PUBLIC_DOMAIN}}",
     // Sealed secrets you set in the Railway dashboard / CLI stay preserved:
     PB_SKIP_ADMIN: preserve(),
   },

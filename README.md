@@ -28,6 +28,8 @@ You get all of this without writing a single line of backend code:
 3. Open the admin dashboard at **`https://<your-app>.up.railway.app/_/`** and log in with:
    - Email: `admin@example.com`
    - Password: `changeme123`
+
+   The dashboard "App URL" (Settings → Application) is set automatically from your deployment URL, so email links, OAuth2 redirects, and file URLs point at the live site — not `localhost`.
 4. You're in. Browse the seeded `todos` collection, create your own collections, and use the API:
 
 ```bash
@@ -55,6 +57,10 @@ Everything is controlled by environment variables. Set them in the Railway dashb
 | `PB_SKIP_ADMIN` | `false` | `true` = don't auto-create a superuser; use the installer link from the logs instead. |
 | `PB_DATA_DIR` | `/pb/pb_data` | Where SQLite data + uploads live (keep it on the volume). |
 | `PORT` | `8080` | HTTP port (Railway injects this). |
+| `PB_PUBLIC_URL` | *(auto)* | Public URL used for email links, OAuth2 redirects, file URLs, and the dashboard "App URL". Leave empty to auto-derive `https://<your-app>.up.railway.app` from Railway's `RAILWAY_PUBLIC_DOMAIN`; set it explicitly when you attach a custom domain. |
+| `PB_APP_NAME` | *(empty)* | Overrides the app name shown in the dashboard. |
+| `PB_SMTP_HOST` / `PB_SMTP_PORT` / `PB_SMTP_USERNAME` / `PB_SMTP_PASSWORD` | *(empty)* | Set `PB_SMTP_HOST` to enable transactional email (password resets, verification, OTP). Port defaults to `587`, auth method to `PLAIN`, TLS to `true`. |
+| `PB_BACKUPS_CRON` / `PB_BACKUPS_CRON_MAX_KEEP` | *(empty)* / `7` | Scheduled backups cron (e.g. `0 2 * * *`) and how many to keep. |
 | `PB_ENCRYPTION_KEY` | *(empty)* | 32+ char random string; encrypts PocketBase settings at rest. |
 | `GOMEMLIMIT` | *(empty)* | e.g. `512MiB` to keep the Go GC memory-aware on small plans. |
 
