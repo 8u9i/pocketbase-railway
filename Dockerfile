@@ -1,21 +1,42 @@
-# PocketBase on Railway
-# Single ~12MB Go binary: SQLite database, auth, file storage, realtime, admin UI.
+# PocketBase on Railway - custom build with vec1 vector search.
 #
-# Bump PB_VERSION to the latest release: https://github.com/pocketbase/pocketbase/releases
-ARG PB_VERSION=0.40.1
+# Two stages:
+#   1. build - compiles the PocketBase Go binary with the ncruces driver and
+#      the vec1 vector extension baked in (no CGO, pure Go). See main.go.
+#   2. run   - the same slim Alpine image as the stock template, but running
+#      OUR binary instead of the downloaded release.
+#
+# Everything stays one service: SQLite data, collections, hooks, migrations,
+# admin UI, realtime, file storage - plus vector search.
 
+# --- Build stage ------------------------------------------------------------
+# Go 1.27 required by PocketBase v0.40.1 (see go.mod).
+FROM golang:1.27-alpine AS build
+
+WORKDIR /src
+
+# go.mod first for better layer caching.
+COPY go.mod ./
+RUN go mod download
+
+COPY main.go ./
+# -tags no_default_driver excludes PocketBase's modernc.org/sqlite driver;
+# the ncruces driver (renamed to "sqlite" via ldflags) takes its place.
+# -trimpath keeps the binary reproducible/small.
+RUN CGO_ENABLED=0 go build \
+    -tags no_default_driver \
+    -ldflags "-s -w -X github.com/ncruces/go-sqlite3/driver.driverName=sqlite" \
+    -trimpath \
+    -o /out/pocketbase .
+
+# --- Run stage --------------------------------------------------------------
 FROM alpine:3.20
-
-ARG PB_VERSION
-ARG TARGETARCH
 
 # ca-certificates: required for OAuth and outbound HTTPS.
 # curl: used by the Docker HEALTHCHECK below.
 RUN apk add --no-cache ca-certificates curl
 
-# Download the release matching the build architecture (amd64 / arm64).
-ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_${TARGETARCH}.zip /tmp/pb.zip
-RUN unzip /tmp/pb.zip -d /pb/ && rm /tmp/pb.zip
+COPY --from=build /out/pocketbase /pb/pocketbase
 
 COPY pb_migrations /pb/pb_migrations
 COPY pb_hooks /pb/pb_hooks

@@ -8,6 +8,10 @@ node_modules/
 .env
 .env.local
 
+# Locally built custom binary (built inside Docker in CI)
+pocketbase
+pocketbase.exe
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

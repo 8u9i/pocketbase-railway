@@ -2,7 +2,7 @@
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
 
-**A one-click backend for your next app.** This template deploys [PocketBase](https://pocketbase.io) — the open-source, single-binary alternative to Supabase/Firebase — to [Railway](https://railway.com) with a persistent volume, a working admin dashboard, and a sample database already seeded.
+**A one-click backend for your next app.** This template deploys [PocketBase](https://pocketbase.io) — the open-source, single-binary alternative to Supabase/Firebase — to [Railway](https://railway.com) with a persistent volume, a working admin dashboard, a sample database already seeded, and **vector search built in** (SQLite's `vec1` engine, the equivalent of pgvector — no separate Postgres service needed).
 
 You get all of this without writing a single line of backend code:
 
@@ -12,6 +12,7 @@ You get all of this without writing a single line of backend code:
 - **Realtime** — subscribe to record changes over SSE/WebSocket
 - **Admin dashboard** — a full UI at `/_/` to manage collections, data, and users
 - **Hooks & migrations** — extend it with JavaScript when you outgrow the defaults
+- **Vector search** — `vec1` virtual tables + KNN queries, all inside the same binary/SQLite file
 
 ---
 
@@ -78,7 +79,104 @@ Use the built-in **Settings → Backups** page in the admin dashboard (or the `p
 
 ## 🧩 Extend (Advanced)
 
-PocketBase is extensible with JavaScript — no separate app server needed.
+PocketBase is extensible with JavaScript — no separate app server needed. This template additionally ships a custom Go build (`main.go` + multi-stage `Dockerfile`) that bakes **vec1** (SQLite's official vector search engine) into the SQLite engine itself.
+
+### Vector search (pgvector-style)
+
+`vec1` virtual tables give you the SQLite equivalent of pgvector `vector` columns + ANN indexes, with zero extra infrastructure:
+
+```sql
+-- vec1 virtual table (see pb_migrations/20250101000000_enable_vec.js)
+CREATE VIRTUAL TABLE vec_items USING vec1(vector);
+
+-- insert a vector (stored as a float32 BLOB via vec1_from_json)
+INSERT INTO vec_items(rowid, vector) VALUES (NULL, vec1_from_json('[1, 1, 1]'));
+
+-- KNN query: nearest neighbors (table-valued function form)
+SELECT rowid, distance
+FROM vec_items(vec1_from_json('[1, 1, 1]'), '{k:5}');
+```
+
+The template ships a ready-made API for this:
+
+```bash
+# Health check - confirms vec1 is loaded
+curl https://<your-app>.up.railway.app/api/vec/health
+# => {"enabled":true}
+
+# KNN search against the seeded vec_items table
+curl "https://<your-app>.up.railway.app/api/vec/search?vector=[1,1,1]&limit=3"
+```
+
+To query from your own code (JS SDK example):
+
+```js
+const pb = new PocketBase("https://<your-app>.up.railway.app");
+const { results } = await pb.send("/api/vec/search", {
+  query: { vector: "[1,1,1]", limit: 5 },
+});
+```
+
+> `vec1` tables live in the same `pb_data/data.db` as your collections but are **not** exposed through the collections API (they're virtual tables). The pattern is: keep your records in normal collections, store embeddings in a `vec1` table keyed by record id, and expose KNN via a small Go route (`main.go` shows a complete example). For ANN at scale, train a model with `vec1_train()` and `INSERT INTO vec_items(cmd, arg) VALUES('rebuild', :model)` — see https://sqlite.org/vec1.
+
+### Storing embeddings on your records (the pgvector workflow)
+
+The `vec_items` table stores vectors directly, but for a real app you usually want the embedding attached to a normal collection so you can CRUD it through the standard API and `expand`/`filter` on it. Do both: keep the vector as a `json` field on the record, and mirror it into the `vec1` table for search (keyed by record id).
+
+**1. Add an `embedding` `json` field to your collection** (Dashboard → collection → add field, type JSON). Example via migration:
+
+```js
+migrate((app) => {
+  const c = app.findCollectionByNameOrId("documents");
+  if (!c) return;
+  c.fields.add({ name: "embedding", type: "json" });
+  app.save(c);
+});
+```
+
+**2. Sync it into `vec_items` automatically** — add to `pb_hooks/` (e.g. `pb_hooks/embeddings.pb.js`):
+
+```js
+// keep the vec1 mirror in sync with the record's embedding field
+onRecordAfterCreateSuccess((e) => {
+  const emb = e.record.get("embedding");
+  if (emb) {
+    e.app.db().newQuery(
+      "INSERT INTO vec_items(rowid, vector) VALUES ({:id}, vec1_from_json({:vec}))"
+    ).bind({ id: e.record.id, vec: JSON.stringify(emb) }).execute();
+  }
+}, "documents");
+
+onRecordAfterUpdateSuccess((e) => {
+  const emb = e.record.get("embedding");
+  if (emb) {
+    e.app.db().newQuery(
+      "UPDATE vec_items SET vector = vec1_from_json({:vec}) WHERE rowid = {:id}"
+    ).bind({ id: e.record.id, vec: JSON.stringify(emb) }).execute();
+  }
+}, "documents");
+
+onRecordAfterDeleteSuccess((e) => {
+  e.app.db().newQuery("DELETE FROM vec_items WHERE rowid = {:id}")
+    .bind({ id: e.record.id }).execute();
+}, "documents");
+```
+
+**3. Search and get full records back** — the `/api/vec/search` endpoint returns matching `rowid`s (your record ids); fetch the records with the normal API:
+
+```js
+const pb = new PocketBase("https://<your-app>.up.railway.app");
+const { results } = await pb.send("/api/vec/search", {
+  query: { vector: "[...embedding...]", limit: 10 },
+});
+const ids = results.map((r) => r.RowID);
+const docs = await pb.collection("documents").getFullList({
+  filter: ids.map((id) => `id = '${id}'`).join(" || "),
+});
+// docs is now ordered by KNN similarity
+```
+
+That's the complete pgvector workflow — store/update/delete embeddings through PocketBase like any field, and query by similarity — all inside the one service.
 
 ### Migrations
 
@@ -119,9 +217,13 @@ SDKs exist for JS, Dart/Flutter, and community clients for many languages.
 
 ### Local development
 
+The Dockerfile builds a custom PocketBase binary with sqlite-vec baked in (see `main.go`). To run the same thing locally you need Go 1.27+:
+
 ```bash
-# Download the PocketBase binary for your OS, or:
-curl -L https://github.com/pocketbase/pocketbase/releases/download/v0.40.1/pocketbase_0.40.1_linux_amd64.zip -o pb.zip && unzip pb.zip
+# Build the custom binary (requires Go 1.27+)
+GOTOOLCHAIN=go1.27.0 go build -tags no_default_driver \
+  -ldflags "-X github.com/ncruces/go-sqlite3/driver.driverName=sqlite" \
+  -o pocketbase .
 
 # Run migrations + hooks locally against ./pb_data
 ./pocketbase serve
@@ -141,7 +243,9 @@ curl -L https://github.com/pocketbase/pocketbase/releases/download/v0.40.1/pocke
 
 ## How this template works
 
-- `Dockerfile` — multi-arch (amd64/arm64) Alpine image pinned to PocketBase `v0.40.1`; copies in `pb_migrations/` and `pb_hooks/`.
+- `main.go` — a custom PocketBase launcher. It swaps the stock modernc SQLite driver for the CGO-free `ncruces/go-sqlite3` driver and registers SQLite's **vec1** vector extension on every connection (`sqlite3.AutoExtension(vec1.Register)`). It also registers the JS runtime (`jsvm`) so `pb_hooks/` and `pb_migrations/` work, and adds Go routes for `/api/vec/health` and `/api/vec/search`. Set `PB_VEC_DISABLED=1` to fall back to the stock driver.
+- `Dockerfile` — multi-stage build: stage 1 compiles the custom binary in a Go 1.27 image (`-tags no_default_driver` + ldflags driver rename), stage 2 is the same slim Alpine image as the stock template. Still one service, one container, one `pb_data` volume.
+- `pb_migrations/20250101000000_enable_vec.js` — creates and seeds the `vec_items` vec1 table (fails with a clear message if run on the stock binary).
 - `entrypoint.sh` — creates the admin superuser from env vars on first boot, then starts `pocketbase serve`.
 - `.railway/railway.ts` — Railway Infrastructure as Code (the current, supported system): declares the service, the `pocketbase-data` volume, healthcheck, and variables. Manage it with `npm run plan` / `npm run apply` (requires `railway login` + `railway link`). See [Railway IaC docs](https://docs.railway.com/infrastructure-as-code).
 
