@@ -8,36 +8,34 @@
 //   - Set PB_FTS_DISABLED=true to disable indexing
 //   - Use the PB_FTS_CONFIG env var as JSON to select fields:
 //     {"collection_name": ["field1", "field2"]}
+//
+// Note: PocketBase runs each hook callback as a standalone program in a
+// separate VM that only has the shared bindings ($app, $os, $security, $http).
+// Module-scope functions are NOT visible inside callbacks, so every callback
+// below is fully self-contained.
 
-const FTS_DISABLED = (() => {
-  const v = $os.getenv("PB_FTS_DISABLED");
-  return v === "true" || v === "1";
-})();
+// Auto-index on record create.
+onRecordAfterCreateSuccess((e) => {
+  const disabled = $os.getenv("PB_FTS_DISABLED");
+  if (disabled === "true" || disabled === "1") return;
 
-const FTS_CONFIG = (() => {
+  const collection = e.record.collection();
+  if (!collection || collection.name.startsWith("_")) return;
+
+  let ftsConfig = {};
   try {
-    return JSON.parse($os.getenv("PB_FTS_CONFIG") || "{}");
-  } catch {
-    return {};
-  }
-})();
+    ftsConfig = JSON.parse($os.getenv("PB_FTS_CONFIG") || "{}");
+  } catch (err) {}
 
-// Fields to extract text from for each collection.
-// Default: all text/editor/json fields are indexed.
-function getFieldsToIndex(collection) {
-  if (FTS_CONFIG[collection.name]) {
-    return FTS_CONFIG[collection.name];
-  }
-  return collection.fields
+  const fields = ftsConfig[collection.name] || collection.fields
     .filter((f) => f.type() === "text" || f.type() === "editor" || f.type() === "json")
     .map((f) => f.name);
-}
 
-// Extract searchable text from a record.
-function extractText(record, fields) {
+  if (fields.length === 0) return;
+
   const parts = [];
   for (const field of fields) {
-    const value = record.get(field);
+    const value = e.record.get(field);
     if (value === null || value === undefined) continue;
     if (typeof value === "string") {
       parts.push(value);
@@ -49,60 +47,80 @@ function extractText(record, fields) {
       parts.push(String(value));
     }
   }
-  return parts.join(" ");
-}
 
-// Index a single record into FTS.
-function indexRecord(collectionName, record, fields) {
+  const title = e.record.get("title") || e.record.get("name") || e.record.id || "";
+  const content = parts.join(" ");
+
   const db = $app.db();
-
   db.newQuery("DELETE FROM fts_records WHERE collection = {:col} AND record_id = {:id}")
-    .bind({ col: collectionName, id: record.id })
+    .bind({ col: collection.name, id: e.record.id })
     .execute();
-
-  const title = record.get("title") || record.get("name") || record.id || "";
-  const content = extractText(record, fields);
-
   db.newQuery(
     "INSERT INTO fts_records (collection, record_id, title, content) VALUES ({:col}, {:id}, {:title}, {:content})"
   )
-    .bind({ col: collectionName, id: record.id, title: String(title), content })
+    .bind({ col: collection.name, id: e.record.id, title: String(title), content })
     .execute();
-}
-
-// Remove a record from the FTS index.
-function deindexRecord(collectionName, recordId) {
-  $app
-    .db()
-    .newQuery("DELETE FROM fts_records WHERE collection = {:col} AND record_id = {:id}")
-    .bind({ col: collectionName, id: recordId })
-    .execute();
-}
-
-// Auto-index on record create.
-onRecordAfterCreateSuccess((e) => {
-  if (FTS_DISABLED) return;
-  const collection = e.record.collection();
-  if (!collection || collection.name.startsWith("_")) return;
-  const fields = getFieldsToIndex(collection);
-  if (fields.length === 0) return;
-  indexRecord(collection.name, e.record, fields);
 });
 
 // Auto-index on record update.
 onRecordAfterUpdateSuccess((e) => {
-  if (FTS_DISABLED) return;
+  const disabled = $os.getenv("PB_FTS_DISABLED");
+  if (disabled === "true" || disabled === "1") return;
+
   const collection = e.record.collection();
   if (!collection || collection.name.startsWith("_")) return;
-  const fields = getFieldsToIndex(collection);
+
+  let ftsConfig = {};
+  try {
+    ftsConfig = JSON.parse($os.getenv("PB_FTS_CONFIG") || "{}");
+  } catch (err) {}
+
+  const fields = ftsConfig[collection.name] || collection.fields
+    .filter((f) => f.type() === "text" || f.type() === "editor" || f.type() === "json")
+    .map((f) => f.name);
+
   if (fields.length === 0) return;
-  indexRecord(collection.name, e.record, fields);
+
+  const parts = [];
+  for (const field of fields) {
+    const value = e.record.get(field);
+    if (value === null || value === undefined) continue;
+    if (typeof value === "string") {
+      parts.push(value);
+    } else if (Array.isArray(value)) {
+      parts.push(value.join(" "));
+    } else if (typeof value === "object") {
+      parts.push(JSON.stringify(value));
+    } else {
+      parts.push(String(value));
+    }
+  }
+
+  const title = e.record.get("title") || e.record.get("name") || e.record.id || "";
+  const content = parts.join(" ");
+
+  const db = $app.db();
+  db.newQuery("DELETE FROM fts_records WHERE collection = {:col} AND record_id = {:id}")
+    .bind({ col: collection.name, id: e.record.id })
+    .execute();
+  db.newQuery(
+    "INSERT INTO fts_records (collection, record_id, title, content) VALUES ({:col}, {:id}, {:title}, {:content})"
+  )
+    .bind({ col: collection.name, id: e.record.id, title: String(title), content })
+    .execute();
 });
 
 // Remove from index on record delete.
 onRecordAfterDeleteSuccess((e) => {
-  if (FTS_DISABLED) return;
+  const disabled = $os.getenv("PB_FTS_DISABLED");
+  if (disabled === "true" || disabled === "1") return;
+
   const collection = e.record.collection();
   if (!collection || collection.name.startsWith("_")) return;
-  deindexRecord(collection.name, e.record.id);
+
+  $app
+    .db()
+    .newQuery("DELETE FROM fts_records WHERE collection = {:col} AND record_id = {:id}")
+    .bind({ col: collection.name, id: e.record.id })
+    .execute();
 });

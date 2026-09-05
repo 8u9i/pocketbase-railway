@@ -18,164 +18,77 @@
 //   }
 //
 // Config: set PB_WEBHOOKS_DISABLED=true to disable.
+//
+// Note: PocketBase runs each hook callback and cron job as a standalone
+// program in a separate VM that only has the shared bindings
+// ($app, $os, $security, $http). Module-scope functions are NOT visible
+// inside callbacks, so every callback below is fully self-contained.
 
-const MAX_RETRIES = 5;
-const RETRY_DELAYS = [5, 30, 120, 600, 3600]; // seconds
+// Fire webhooks on record create.
+onRecordAfterCreateSuccess((e) => {
+  const disabled = $os.getenv("PB_WEBHOOKS_DISABLED");
+  if (disabled === "true" || disabled === "1") return;
 
-const WEBHOOKS_DISABLED = (() => {
-  const v = $os.getenv("PB_WEBHOOKS_DISABLED");
-  return v === "true" || v === "1";
-})();
+  const collection = e.record.collection();
+  if (!collection || collection.name.startsWith("_")) return;
 
-// Find webhooks that match the event and collection.
-function findMatchingWebhooks(eventName, collectionName) {
-  const allWebhooks = $app
-    .db()
+  const db = $app.db();
+  const allWebhooks = db
     .newQuery("SELECT * FROM webhooks WHERE enabled = 1")
     .all();
 
-  return allWebhooks.filter((wh) => {
-    const events = (wh.events || "").split(",").map((e) => e.trim());
-    if (!events.includes(eventName) && !events.includes("*")) return false;
-    if (wh.collection && wh.collection !== collectionName) return false;
-    return true;
-  });
-}
+  for (const wh of allWebhooks) {
+    const events = (wh.events || "").split(",").map((ev) => ev.trim());
+    if (!events.includes("create") && !events.includes("*")) continue;
+    if (wh.collection && wh.collection !== collection.name) continue;
 
-// Compute HMAC-SHA256 signature for a payload.
-function signPayload(payload, secret) {
-  if (!secret) return "";
-  return "sha256=" + $security.hs256(payload, secret);
-}
-
-// Schedule a retry for a failed delivery.
-function scheduleRetry(deliveryId, attemptCount) {
-  if (attemptCount >= MAX_RETRIES) return;
-
-  const delay = RETRY_DELAYS[Math.min(attemptCount, RETRY_DELAYS.length - 1)];
-  const nextRetry = new Date(Date.now() + delay * 1000);
-
-  $app
-    .db()
-    .newQuery("UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = {:attempt} WHERE id = {:id}")
-    .bind({ retry: nextRetry.toISOString(), attempt: attemptCount + 1, id: deliveryId })
-    .execute();
-}
-
-// Dispatch a webhook and log the delivery.
-function dispatchWebhook(webhook, eventName, record) {
-  const db = $app.db();
-
-  const payload = JSON.stringify({
-    event: eventName,
-    collection: record.collection().name,
-    record: record,
-    timestamp: new Date().toISOString(),
-  });
-
-  const deliveryId = $security.randomStringWithAlphabet(
-    15,
-    "abcdefghijklmnopqrstuvwxyz0123456789"
-  );
-
-  db.newQuery(
-    "INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempts) VALUES ({:id}, {:whId}, {:event}, {:payload}, 0)"
-  )
-    .bind({ id: deliveryId, whId: webhook.id, event: eventName, payload })
-    .execute();
-
-  const customHeaders = webhook.headers ? JSON.parse(webhook.headers || "{}") : {};
-  const headers = {
-    "Content-Type": "application/json",
-    "X-PB-Webhook-Event": eventName,
-    "X-PB-Webhook-ID": webhook.id,
-    "X-PB-Delivery-ID": deliveryId,
-    ...customHeaders,
-  };
-
-  const signature = signPayload(payload, webhook.secret);
-  if (signature) {
-    headers["X-PB-Signature"] = signature;
-  }
-
-  let response;
-  try {
-    response = $http.send({
-      url: webhook.url,
-      method: "POST",
-      headers: headers,
-      body: payload,
-      timeout: 30,
+    const payload = JSON.stringify({
+      event: "create",
+      collection: collection.name,
+      record: e.record,
+      timestamp: new Date().toISOString(),
     });
-  } catch (e) {
-    scheduleRetry(deliveryId, 0);
-    return;
-  }
 
-  const success = response.statusCode >= 200 && response.statusCode < 300;
-  const responseBody = typeof response.body === "string" ? response.body : "";
+    const deliveryId = $security.randomStringWithAlphabet(
+      15,
+      "abcdefghijklmnopqrstuvwxyz0123456789"
+    );
 
-  db.newQuery(
-    "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
-  )
-    .bind({
-      code: response.statusCode,
-      body: responseBody.substring(0, 1000),
-      ok: success ? 1 : 0,
-      id: deliveryId,
-    })
-    .execute();
-
-  if (!success) {
-    scheduleRetry(deliveryId, 0);
-  }
-}
-
-// Process pending retries (called by cron).
-function processRetries() {
-  const db = $app.db();
-
-  const pending = db
-    .newQuery(
-      "SELECT * FROM webhook_deliveries WHERE success = 0 AND attempts < {:max} AND next_retry_at IS NOT NULL AND next_retry_at <= {:now}"
+    db.newQuery(
+      "INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempts) VALUES ({:id}, {:whId}, {:event}, {:payload}, 0)"
     )
-    .bind({ max: MAX_RETRIES, now: new Date().toISOString() })
-    .all();
+      .bind({ id: deliveryId, whId: wh.id, event: "create", payload })
+      .execute();
 
-  for (const delivery of pending) {
-    const webhook = db
-      .newQuery("SELECT * FROM webhooks WHERE id = {:id}")
-      .bind({ id: delivery.webhook_id })
-      .one();
-
-    if (!webhook || !webhook.enabled) continue;
-
-    const customHeaders = webhook.headers ? JSON.parse(webhook.headers || "{}") : {};
+    const customHeaders = wh.headers ? JSON.parse(wh.headers || "{}") : {};
     const headers = {
       "Content-Type": "application/json",
-      "X-PB-Webhook-Event": delivery.event,
-      "X-PB-Webhook-ID": webhook.id,
-      "X-PB-Delivery-ID": delivery.id,
-      "X-PB-Retry-Attempt": String(delivery.attempts),
+      "X-PB-Webhook-Event": "create",
+      "X-PB-Webhook-ID": wh.id,
+      "X-PB-Delivery-ID": deliveryId,
       ...customHeaders,
     };
 
-    const signature = signPayload(delivery.payload, webhook.secret);
-    if (signature) {
-      headers["X-PB-Signature"] = signature;
+    if (wh.secret) {
+      headers["X-PB-Signature"] = "sha256=" + $security.hs256(payload, wh.secret);
     }
 
     let response;
     try {
       response = $http.send({
-        url: webhook.url,
+        url: wh.url,
         method: "POST",
         headers: headers,
-        body: delivery.payload,
+        body: payload,
         timeout: 30,
       });
-    } catch (e) {
-      scheduleRetry(delivery.id, delivery.attempts);
+    } catch (err) {
+      const nextRetry = new Date(Date.now() + 5 * 1000);
+      db.newQuery(
+        "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = 1 WHERE id = {:id}"
+      )
+        .bind({ retry: nextRetry.toISOString(), id: deliveryId })
+        .execute();
       continue;
     }
 
@@ -189,35 +102,288 @@ function processRetries() {
         code: response.statusCode,
         body: responseBody.substring(0, 1000),
         ok: success ? 1 : 0,
-        id: delivery.id,
+        id: deliveryId,
       })
       .execute();
 
     if (!success) {
-      scheduleRetry(delivery.id, delivery.attempts);
+      const nextRetry = new Date(Date.now() + 5 * 1000);
+      db.newQuery(
+        "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = 1 WHERE id = {:id}"
+      )
+        .bind({ retry: nextRetry.toISOString(), id: deliveryId })
+        .execute();
     }
   }
-}
+});
 
-// Register cron for retry processing (every minute).
-if (!WEBHOOKS_DISABLED) {
-  cronAdd("webhook-retries", "* * * * *", () => {
-    processRetries();
-  });
-}
+// Fire webhooks on record update.
+onRecordAfterUpdateSuccess((e) => {
+  const disabled = $os.getenv("PB_WEBHOOKS_DISABLED");
+  if (disabled === "true" || disabled === "1") return;
 
-// Fire webhooks on record events.
-function fireEvent(eventName, e) {
-  if (WEBHOOKS_DISABLED) return;
   const collection = e.record.collection();
   if (!collection || collection.name.startsWith("_")) return;
 
-  const webhooks = findMatchingWebhooks(eventName, collection.name);
-  for (const wh of webhooks) {
-    dispatchWebhook(wh, eventName, e.record);
-  }
-}
+  const db = $app.db();
+  const allWebhooks = db
+    .newQuery("SELECT * FROM webhooks WHERE enabled = 1")
+    .all();
 
-onRecordAfterCreateSuccess((e) => fireEvent("create", e));
-onRecordAfterUpdateSuccess((e) => fireEvent("update", e));
-onRecordAfterDeleteSuccess((e) => fireEvent("delete", e));
+  for (const wh of allWebhooks) {
+    const events = (wh.events || "").split(",").map((ev) => ev.trim());
+    if (!events.includes("update") && !events.includes("*")) continue;
+    if (wh.collection && wh.collection !== collection.name) continue;
+
+    const payload = JSON.stringify({
+      event: "update",
+      collection: collection.name,
+      record: e.record,
+      timestamp: new Date().toISOString(),
+    });
+
+    const deliveryId = $security.randomStringWithAlphabet(
+      15,
+      "abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+
+    db.newQuery(
+      "INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempts) VALUES ({:id}, {:whId}, {:event}, {:payload}, 0)"
+    )
+      .bind({ id: deliveryId, whId: wh.id, event: "update", payload })
+      .execute();
+
+    const customHeaders = wh.headers ? JSON.parse(wh.headers || "{}") : {};
+    const headers = {
+      "Content-Type": "application/json",
+      "X-PB-Webhook-Event": "update",
+      "X-PB-Webhook-ID": wh.id,
+      "X-PB-Delivery-ID": deliveryId,
+      ...customHeaders,
+    };
+
+    if (wh.secret) {
+      headers["X-PB-Signature"] = "sha256=" + $security.hs256(payload, wh.secret);
+    }
+
+    let response;
+    try {
+      response = $http.send({
+        url: wh.url,
+        method: "POST",
+        headers: headers,
+        body: payload,
+        timeout: 30,
+      });
+    } catch (err) {
+      const nextRetry = new Date(Date.now() + 5 * 1000);
+      db.newQuery(
+        "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = 1 WHERE id = {:id}"
+      )
+        .bind({ retry: nextRetry.toISOString(), id: deliveryId })
+        .execute();
+      continue;
+    }
+
+    const success = response.statusCode >= 200 && response.statusCode < 300;
+    const responseBody = typeof response.body === "string" ? response.body : "";
+
+    db.newQuery(
+      "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
+    )
+      .bind({
+        code: response.statusCode,
+        body: responseBody.substring(0, 1000),
+        ok: success ? 1 : 0,
+        id: deliveryId,
+      })
+      .execute();
+
+    if (!success) {
+      const nextRetry = new Date(Date.now() + 5 * 1000);
+      db.newQuery(
+        "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = 1 WHERE id = {:id}"
+      )
+        .bind({ retry: nextRetry.toISOString(), id: deliveryId })
+        .execute();
+    }
+  }
+});
+
+// Fire webhooks on record delete.
+onRecordAfterDeleteSuccess((e) => {
+  const disabled = $os.getenv("PB_WEBHOOKS_DISABLED");
+  if (disabled === "true" || disabled === "1") return;
+
+  const collection = e.record.collection();
+  if (!collection || collection.name.startsWith("_")) return;
+
+  const db = $app.db();
+  const allWebhooks = db
+    .newQuery("SELECT * FROM webhooks WHERE enabled = 1")
+    .all();
+
+  for (const wh of allWebhooks) {
+    const events = (wh.events || "").split(",").map((ev) => ev.trim());
+    if (!events.includes("delete") && !events.includes("*")) continue;
+    if (wh.collection && wh.collection !== collection.name) continue;
+
+    const payload = JSON.stringify({
+      event: "delete",
+      collection: collection.name,
+      record: e.record,
+      timestamp: new Date().toISOString(),
+    });
+
+    const deliveryId = $security.randomStringWithAlphabet(
+      15,
+      "abcdefghijklmnopqrstuvwxyz0123456789"
+    );
+
+    db.newQuery(
+      "INSERT INTO webhook_deliveries (id, webhook_id, event, payload, attempts) VALUES ({:id}, {:whId}, {:event}, {:payload}, 0)"
+    )
+      .bind({ id: deliveryId, whId: wh.id, event: "delete", payload })
+      .execute();
+
+    const customHeaders = wh.headers ? JSON.parse(wh.headers || "{}") : {};
+    const headers = {
+      "Content-Type": "application/json",
+      "X-PB-Webhook-Event": "delete",
+      "X-PB-Webhook-ID": wh.id,
+      "X-PB-Delivery-ID": deliveryId,
+      ...customHeaders,
+    };
+
+    if (wh.secret) {
+      headers["X-PB-Signature"] = "sha256=" + $security.hs256(payload, wh.secret);
+    }
+
+    let response;
+    try {
+      response = $http.send({
+        url: wh.url,
+        method: "POST",
+        headers: headers,
+        body: payload,
+        timeout: 30,
+      });
+    } catch (err) {
+      const nextRetry = new Date(Date.now() + 5 * 1000);
+      db.newQuery(
+        "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = 1 WHERE id = {:id}"
+      )
+        .bind({ retry: nextRetry.toISOString(), id: deliveryId })
+        .execute();
+      continue;
+    }
+
+    const success = response.statusCode >= 200 && response.statusCode < 300;
+    const responseBody = typeof response.body === "string" ? response.body : "";
+
+    db.newQuery(
+      "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
+    )
+      .bind({
+        code: response.statusCode,
+        body: responseBody.substring(0, 1000),
+        ok: success ? 1 : 0,
+        id: deliveryId,
+      })
+      .execute();
+
+    if (!success) {
+      const nextRetry = new Date(Date.now() + 5 * 1000);
+      db.newQuery(
+        "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = 1 WHERE id = {:id}"
+      )
+        .bind({ retry: nextRetry.toISOString(), id: deliveryId })
+        .execute();
+    }
+  }
+});
+
+// Register cron for retry processing (every minute).
+if ($os.getenv("PB_WEBHOOKS_DISABLED") !== "true" && $os.getenv("PB_WEBHOOKS_DISABLED") !== "1") {
+  cronAdd("webhook-retries", "* * * * *", () => {
+    const maxRetries = 5;
+    const retryDelays = [5, 30, 120, 600, 3600];
+    const db = $app.db();
+
+    const pending = db
+      .newQuery(
+        "SELECT * FROM webhook_deliveries WHERE success = 0 AND attempts < {:max} AND next_retry_at IS NOT NULL AND next_retry_at <= {:now}"
+      )
+      .bind({ max: maxRetries, now: new Date().toISOString() })
+      .all();
+
+    for (const delivery of pending) {
+      const webhook = db
+        .newQuery("SELECT * FROM webhooks WHERE id = {:id}")
+        .bind({ id: delivery.webhook_id })
+        .one();
+
+      if (!webhook || !webhook.enabled) continue;
+
+      const customHeaders = webhook.headers ? JSON.parse(webhook.headers || "{}") : {};
+      const headers = {
+        "Content-Type": "application/json",
+        "X-PB-Webhook-Event": delivery.event,
+        "X-PB-Webhook-ID": webhook.id,
+        "X-PB-Delivery-ID": delivery.id,
+        "X-PB-Retry-Attempt": String(delivery.attempts),
+        ...customHeaders,
+      };
+
+      if (webhook.secret) {
+        headers["X-PB-Signature"] = "sha256=" + $security.hs256(delivery.payload, webhook.secret);
+      }
+
+      let response;
+      try {
+        response = $http.send({
+          url: webhook.url,
+          method: "POST",
+          headers: headers,
+          body: delivery.payload,
+          timeout: 30,
+        });
+      } catch (err) {
+        if (delivery.attempts < maxRetries) {
+          const delay = retryDelays[Math.min(delivery.attempts, retryDelays.length - 1)];
+          const nextRetry = new Date(Date.now() + delay * 1000);
+          db.newQuery(
+            "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = {:attempt} WHERE id = {:id}"
+          )
+            .bind({ retry: nextRetry.toISOString(), attempt: delivery.attempts + 1, id: delivery.id })
+            .execute();
+        }
+        continue;
+      }
+
+      const success = response.statusCode >= 200 && response.statusCode < 300;
+      const responseBody = typeof response.body === "string" ? response.body : "";
+
+      db.newQuery(
+        "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
+      )
+        .bind({
+          code: response.statusCode,
+          body: responseBody.substring(0, 1000),
+          ok: success ? 1 : 0,
+          id: delivery.id,
+        })
+        .execute();
+
+      if (!success && delivery.attempts < maxRetries) {
+        const delay = retryDelays[Math.min(delivery.attempts, retryDelays.length - 1)];
+        const nextRetry = new Date(Date.now() + delay * 1000);
+        db.newQuery(
+          "UPDATE webhook_deliveries SET next_retry_at = {:retry}, attempts = {:attempt} WHERE id = {:id}"
+        )
+          .bind({ retry: nextRetry.toISOString(), attempt: delivery.attempts + 1, id: delivery.id })
+          .execute();
+      }
+    }
+  });
+}
