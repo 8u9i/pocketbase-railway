@@ -15,8 +15,8 @@ FROM golang:1.27-alpine AS build
 
 WORKDIR /src
 
-# go.mod first for better layer caching.
-COPY go.mod ./
+# go.mod + go.sum first for better layer caching and module verification.
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY main.go ./
