@@ -24,12 +24,11 @@ onCollectionAfterCreateSuccess((e) => {
   const hasField = collection.fields.some((f) => f.name === "deleted_at");
   if (hasField) return;
 
-  collection.fields.add({
+  collection.fields.add(new DateField({
     name: "deleted_at",
-    type: "date",
     hidden: true,
     system: false,
-  });
+  }));
 
   $app.save(collection);
 });

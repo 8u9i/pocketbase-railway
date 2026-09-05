@@ -33,9 +33,16 @@ onRecordAfterCreateSuccess((e) => {
   if (!collection || collection.name.startsWith("_")) return;
 
   const db = $app.db();
-  const allWebhooks = db
-    .newQuery("SELECT * FROM webhooks WHERE enabled = 1")
-    .all();
+  const allWebhooks = arrayOf(new DynamicModel({
+    id: "",
+    url: "",
+    events: "",
+    secret: nullString(),
+    enabled: 0,
+    headers: nullString(),
+    collection: nullString(),
+  }));
+  db.newQuery("SELECT * FROM webhooks WHERE enabled = 1").all(allWebhooks);
 
   for (const wh of allWebhooks) {
     const events = (wh.events || "").split(",").map((ev) => ev.trim());
@@ -93,14 +100,17 @@ onRecordAfterCreateSuccess((e) => {
     }
 
     const success = response.statusCode >= 200 && response.statusCode < 300;
-    const responseBody = typeof response.body === "string" ? response.body : "";
+    let responseBody = "";
+    try {
+      responseBody = toString(response.body, 1000);
+    } catch (err) {}
 
     db.newQuery(
       "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
     )
       .bind({
         code: response.statusCode,
-        body: responseBody.substring(0, 1000),
+        body: responseBody,
         ok: success ? 1 : 0,
         id: deliveryId,
       })
@@ -126,9 +136,16 @@ onRecordAfterUpdateSuccess((e) => {
   if (!collection || collection.name.startsWith("_")) return;
 
   const db = $app.db();
-  const allWebhooks = db
-    .newQuery("SELECT * FROM webhooks WHERE enabled = 1")
-    .all();
+  const allWebhooks = arrayOf(new DynamicModel({
+    id: "",
+    url: "",
+    events: "",
+    secret: nullString(),
+    enabled: 0,
+    headers: nullString(),
+    collection: nullString(),
+  }));
+  db.newQuery("SELECT * FROM webhooks WHERE enabled = 1").all(allWebhooks);
 
   for (const wh of allWebhooks) {
     const events = (wh.events || "").split(",").map((ev) => ev.trim());
@@ -186,14 +203,17 @@ onRecordAfterUpdateSuccess((e) => {
     }
 
     const success = response.statusCode >= 200 && response.statusCode < 300;
-    const responseBody = typeof response.body === "string" ? response.body : "";
+    let responseBody = "";
+    try {
+      responseBody = toString(response.body, 1000);
+    } catch (err) {}
 
     db.newQuery(
       "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
     )
       .bind({
         code: response.statusCode,
-        body: responseBody.substring(0, 1000),
+        body: responseBody,
         ok: success ? 1 : 0,
         id: deliveryId,
       })
@@ -219,9 +239,16 @@ onRecordAfterDeleteSuccess((e) => {
   if (!collection || collection.name.startsWith("_")) return;
 
   const db = $app.db();
-  const allWebhooks = db
-    .newQuery("SELECT * FROM webhooks WHERE enabled = 1")
-    .all();
+  const allWebhooks = arrayOf(new DynamicModel({
+    id: "",
+    url: "",
+    events: "",
+    secret: nullString(),
+    enabled: 0,
+    headers: nullString(),
+    collection: nullString(),
+  }));
+  db.newQuery("SELECT * FROM webhooks WHERE enabled = 1").all(allWebhooks);
 
   for (const wh of allWebhooks) {
     const events = (wh.events || "").split(",").map((ev) => ev.trim());
@@ -279,14 +306,17 @@ onRecordAfterDeleteSuccess((e) => {
     }
 
     const success = response.statusCode >= 200 && response.statusCode < 300;
-    const responseBody = typeof response.body === "string" ? response.body : "";
+    let responseBody = "";
+    try {
+      responseBody = toString(response.body, 1000);
+    } catch (err) {}
 
     db.newQuery(
       "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
     )
       .bind({
         code: response.statusCode,
-        body: responseBody.substring(0, 1000),
+        body: responseBody,
         ok: success ? 1 : 0,
         id: deliveryId,
       })
@@ -310,18 +340,39 @@ if ($os.getenv("PB_WEBHOOKS_DISABLED") !== "true" && $os.getenv("PB_WEBHOOKS_DIS
     const retryDelays = [5, 30, 120, 600, 3600];
     const db = $app.db();
 
-    const pending = db
-      .newQuery(
-        "SELECT * FROM webhook_deliveries WHERE success = 0 AND attempts < {:max} AND next_retry_at IS NOT NULL AND next_retry_at <= {:now}"
-      )
+    const pending = arrayOf(new DynamicModel({
+      id: "",
+      webhook_id: "",
+      event: "",
+      payload: "",
+      status_code: nullInt(),
+      success: 0,
+      attempts: 0,
+      next_retry_at: nullString(),
+    }));
+    db.newQuery(
+      "SELECT id, webhook_id, event, payload, status_code, success, attempts, next_retry_at FROM webhook_deliveries WHERE success = 0 AND attempts < {:max} AND next_retry_at IS NOT NULL AND next_retry_at <= {:now}"
+    )
       .bind({ max: maxRetries, now: new Date().toISOString() })
-      .all();
+      .all(pending);
 
     for (const delivery of pending) {
-      const webhook = db
-        .newQuery("SELECT * FROM webhooks WHERE id = {:id}")
-        .bind({ id: delivery.webhook_id })
-        .one();
+      const webhook = new DynamicModel({
+        id: "",
+        url: "",
+        events: "",
+        secret: nullString(),
+        enabled: 0,
+        headers: nullString(),
+        collection: nullString(),
+      });
+      try {
+        db.newQuery("SELECT * FROM webhooks WHERE id = {:id}")
+          .bind({ id: delivery.webhook_id })
+          .one(webhook);
+      } catch (err) {
+        continue;
+      }
 
       if (!webhook || !webhook.enabled) continue;
 
@@ -362,14 +413,17 @@ if ($os.getenv("PB_WEBHOOKS_DISABLED") !== "true" && $os.getenv("PB_WEBHOOKS_DIS
       }
 
       const success = response.statusCode >= 200 && response.statusCode < 300;
-      const responseBody = typeof response.body === "string" ? response.body : "";
+      let responseBody = "";
+      try {
+        responseBody = toString(response.body, 1000);
+      } catch (err) {}
 
       db.newQuery(
         "UPDATE webhook_deliveries SET status_code = {:code}, response_body = {:body}, success = {:ok}, attempts = attempts + 1 WHERE id = {:id}"
       )
         .bind({
           code: response.statusCode,
-          body: responseBody.substring(0, 1000),
+          body: responseBody,
           ok: success ? 1 : 0,
           id: delivery.id,
         })
