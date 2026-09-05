@@ -1,114 +1,131 @@
 # PocketBase on Railway
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/pocketbase-railway)
 
-**A one-click backend for your next app.** This template deploys [PocketBase](https://pocketbase.io) — the open-source, single-binary alternative to Supabase/Firebase — to [Railway](https://railway.com) with a persistent volume, a working admin dashboard, a sample database already seeded, and **vector search built in** (SQLite's `vec1` engine, the equivalent of pgvector — no separate Postgres service needed).
+PocketBase on Railway automatically deploys a custom PocketBase build with a persistent volume, automatic admin setup, and vector search built in — no separate database service required.
 
-You get all of this without writing a single line of backend code:
+**Unlike stock PocketBase, this template includes 5 features users commonly request:**
 
-- **Database** — SQLite with a REST-ish API (`/api/collections/<name>/records`)
-- **Auth** — email/password, OAuth (Google, GitHub, …), passkeys, MFA
-- **File storage** — uploads served from the same API
-- **Realtime** — subscribe to record changes over SSE/WebSocket
-- **Admin dashboard** — a full UI at `/_/` to manage collections, data, and users
-- **Hooks & migrations** — extend it with JavaScript when you outgrow the defaults
-- **Vector search** — `vec1` virtual tables + KNN queries, all inside the same binary/SQLite file
+- **Full-text search** — FTS5-powered search with BM25 ranking and highlighted snippets, not slow `LIKE` queries
+- **Soft delete** — Trash and restore records instead of permanent deletion
+- **Webhooks** — Declarative HTTP callbacks when records change, with HMAC signing and automatic retries
+- **Anonymous auth** — Guest sessions that users can convert to full accounts later
+- **Bulk import** — CSV and JSON import with per-row error reporting
+
+**After deployment:**
+
+1. Access your admin dashboard at `https://<your-app>.up.railway.app/_/`
+2. Log in with `admin@example.com` / `changeme123` (change the password immediately)
+3. Start building — create collections in the dashboard or via the REST API
 
 ---
 
-## 🚀 Deploy (Beginner)
+## What is PocketBase?
 
-1. Click **Deploy on Railway** above, or via CLI:
+PocketBase is an open-source, single-binary backend that gives you a real-time database, authentication, file storage, and an admin dashboard — all in one file. It's the self-hosted alternative to Firebase and Supabase, built on SQLite with no external dependencies.
+
+This template extends PocketBase with a custom Go binary that adds vector search (via SQLite's vec1 extension) and the features listed above, while keeping everything in a single container with persistent storage on Railway.
+
+---
+
+## What you get
+
+Out of the box, without writing any backend code:
+
+| Feature | Details |
+|---------|---------|
+| **Database** | SQLite with a REST API at `/api/collections/<name>/records` |
+| **Auth** | Email/password, OAuth (Google, GitHub, etc.), passkeys, MFA, anonymous/guest |
+| **File storage** | Uploads served from the same API |
+| **Realtime** | Subscribe to record changes over SSE/WebSocket |
+| **Admin dashboard** | Full UI at `/_/` for managing collections, data, and users |
+| **Hooks & migrations** | Extend with JavaScript when you need custom logic |
+| **Vector search** | `vec1` virtual tables for KNN queries (pgvector equivalent) |
+| **Full-text search** | FTS5 with BM25 ranking, snippets, and highlight tags |
+
+---
+
+## Quick deploy
+
+1. Click the **Deploy on Railway** button above, or use the CLI:
+
    ```bash
    railway login
    railway link
-   npm install          # installs the railway IaC CLI package
-   npm run apply        # plans + applies the service, volume, and variables
+   npm install
+   npm run apply
    ```
-2. Railway builds the container and starts PocketBase automatically — the data volume, healthcheck, and start command are all configured in `.railway/railway.ts`.
-3. Open the admin dashboard at **`https://<your-app>.up.railway.app/_/`** and log in with:
+
+2. Railway builds the container and starts PocketBase. The data volume, healthcheck, and start command are all configured in `.railway/railway.ts`.
+
+3. Open your admin dashboard at `https://<your-app>.up.railway.app/_/` and log in with:
    - Email: `admin@example.com`
    - Password: `changeme123`
 
-   The dashboard "App URL" (Settings → Application) is set automatically from your deployment URL, so email links, OAuth2 redirects, and file URLs point at the live site — not `localhost`.
-4. You're in. Browse the seeded `todos` collection, create your own collections, and use the API:
+   The app URL is set automatically from your Railway domain, so email links, OAuth redirects, and file URLs all point to the right place.
 
-```bash
-# List todos (public by default, see the sample migration)
-curl https://<your-app>.up.railway.app/api/collections/todos/records
+4. Start building. Create collections in the dashboard or via the API:
 
-# Create a todo
-curl -X POST https://<your-app>.up.railway.app/api/collections/todos/records \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Ship my app", "done": false}'
-```
+   ```bash
+   curl -X POST https://<your-app>.up.railway.app/api/collections/posts/records \
+     -H "Content-Type: application/json" \
+     -d '{"title": "Hello World", "body": "My first post"}'
+   ```
 
-> ⚠️ **Change the default admin password immediately.** `admin@example.com` / `changeme123` are public defaults (see below).
+> **Important:** Change the default admin password immediately. The defaults are public and meant only for initial setup.
 
 ---
 
-## ⚙️ Configure (Intermediate)
+## Configuration
 
-Everything is controlled by environment variables. Set them in the Railway dashboard (or `.env`) and redeploy.
+Everything is controlled by environment variables. Set them in the Railway dashboard or in `.env`.
 
-| Variable | Default | Description |
+| Variable | Default | What it does |
 | --- | --- | --- |
-| `PB_ADMIN_EMAIL` | `admin@example.com` | Superuser email created on first boot. |
-| `PB_ADMIN_PASSWORD` | `changeme123` | Superuser password. **Change this!** |
-| `PB_SKIP_ADMIN` | `false` | `true` = don't auto-create a superuser; use the installer link from the logs instead. |
-| `PB_DATA_DIR` | `/pb/pb_data` | Where SQLite data + uploads live (keep it on the volume). |
-| `PORT` | `8080` | HTTP port (Railway injects this). |
-| `PB_PUBLIC_URL` | *(auto)* | Public URL used for email links, OAuth2 redirects, file URLs, and the dashboard "App URL". Leave empty to auto-derive `https://<your-app>.up.railway.app` from Railway's `RAILWAY_PUBLIC_DOMAIN`; set it explicitly when you attach a custom domain. |
-| `PB_APP_NAME` | *(empty)* | Overrides the app name shown in the dashboard. |
-| `PB_SMTP_HOST` / `PB_SMTP_PORT` / `PB_SMTP_USERNAME` / `PB_SMTP_PASSWORD` | *(empty)* | Set `PB_SMTP_HOST` to enable transactional email (password resets, verification, OTP). Port defaults to `587`, auth method to `PLAIN`, TLS to `true`. |
-| `PB_BACKUPS_CRON` / `PB_BACKUPS_CRON_MAX_KEEP` | *(empty)* / `7` | Scheduled backups cron (e.g. `0 2 * * *`) and how many to keep. |
-| `PB_ENCRYPTION_KEY` | *(empty)* | 32+ char random string; encrypts PocketBase settings at rest. |
-| `GOMEMLIMIT` | *(empty)* | e.g. `512MiB` to keep the Go GC memory-aware on small plans. |
+| `PB_ADMIN_EMAIL` | `admin@example.com` | Superuser email created on first boot |
+| `PB_ADMIN_PASSWORD` | `changeme123` | Superuser password — **change this** |
+| `PB_SKIP_ADMIN` | `false` | Set to `true` to skip auto-creating a superuser |
+| `PB_DATA_DIR` | `/pb/pb_data` | Where SQLite data and uploads live |
+| `PORT` | `8080` | HTTP port (Railway injects this) |
+| `PB_PUBLIC_URL` | *(auto)* | Public URL for email links, OAuth redirects, and file URLs. Auto-derived from Railway's domain if left empty |
+| `PB_APP_NAME` | *(empty)* | Override the app name shown in the dashboard |
+| `PB_SMTP_HOST` | *(empty)* | Enable transactional email (password resets, verification, OTP) |
+| `PB_BACKUPS_CRON` | *(empty)* | Scheduled backups cron expression, e.g. `0 2 * * *` |
+| `PB_ENCRYPTION_KEY` | *(empty)* | 32+ character random string to encrypt settings at rest |
+| `GOMEMLIMIT` | *(empty)* | Memory limit hint for the Go GC, e.g. `512MiB` |
 
-**Set real credentials as sealed variables** in Railway so they never appear in your repo or template. The IaC file keeps any value you set in the dashboard via `preserve()`.
+**Tip:** Use Railway's sealed variables for secrets. Values set in the dashboard are preserved via `preserve()` in the IaC file.
 
-### The data volume
+### Data volume
 
-`pb_data/` is mounted on a persistent Railway volume, so your database, uploads, and settings survive redeploys and restarts. Need more space? Bump the volume size in `.railway/railway.ts`.
+Your database, uploads, and settings live on a persistent Railway volume mounted at `/pb/pb_data`. They survive redeploys and restarts. Need more space? Adjust the volume size in `.railway/railway.ts`.
 
 ### Backups
 
-Use the built-in **Settings → Backups** page in the admin dashboard (or the `pocketbase backup` CLI) to snapshot `pb_data` to a ZIP.
+Use the **Settings → Backups** page in the admin dashboard to snapshot your data to a ZIP file. You can also set `PB_BACKUPS_CRON` for automatic scheduled backups.
 
 ---
 
-## 🧩 Extend (Advanced)
+## Vector search
 
-PocketBase is extensible with JavaScript — no separate app server needed. This template additionally ships a custom Go build (`main.go` + multi-stage `Dockerfile`) that bakes **vec1** (SQLite's official vector search engine) into the SQLite engine itself.
+PocketBase normally uses a SQLite driver that doesn't support extensions. This template swaps in the `ncruces/go-sqlite3` driver and registers [SQLite's vec1 extension](https://sqlite.org/vec1) on every connection — giving you pgvector-style vector search with zero additional infrastructure.
 
-### Vector search (pgvector-style)
+### How it works
 
-`vec1` virtual tables give you the SQLite equivalent of pgvector `vector` columns + ANN indexes, with zero extra infrastructure:
+`vec1` virtual tables live alongside your regular collections in the same SQLite file, but they're not exposed through the collections API. The pattern is simple: store your records in normal collections, keep embeddings in a `vec1` table keyed by record ID, and query via the `/api/vec/*` endpoints.
 
-```sql
--- vec1 virtual table (see pb_migrations/20250101000000_enable_vec.js)
-CREATE VIRTUAL TABLE vec_items USING vec1(vector);
-
--- insert a vector (stored as a float32 BLOB via vec1_from_json)
-INSERT INTO vec_items(rowid, vector) VALUES (NULL, vec1_from_json('[1, 1, 1]'));
-
--- KNN query: nearest neighbors (table-valued function form)
-SELECT rowid, distance
-FROM vec_items(vec1_from_json('[1, 1, 1]'), '{k:5}');
-```
-
-The template ships a ready-made API for this:
+### Quick example
 
 ```bash
-# Health check - confirms vec1 is loaded
+# Check that vec1 is loaded
 curl https://<your-app>.up.railway.app/api/vec/health
-# => {"enabled":true}
+# => {"enabled": true}
 
-# KNN search against the seeded vec_items table
-curl "https://<your-app>.up.railway.app/api/vec/search?vector=[1,1,1]&limit=3"
+# Search for similar vectors
+curl "https://<your-app>.up.railway.app/api/vec/search?vector=[1,1,1]&limit=5"
 ```
 
-To query from your own code (JS SDK example):
+### Using the JavaScript SDK
 
 ```js
 const pb = new PocketBase("https://<your-app>.up.railway.app");
@@ -117,27 +134,12 @@ const { results } = await pb.send("/api/vec/search", {
 });
 ```
 
-> `vec1` tables live in the same `pb_data/data.db` as your collections but are **not** exposed through the collections API (they're virtual tables). The pattern is: keep your records in normal collections, store embeddings in a `vec1` table keyed by record id, and expose KNN via a small Go route (`main.go` shows a complete example). For ANN at scale, train a model with `vec1_train()` and `INSERT INTO vec_items(cmd, arg) VALUES('rebuild', :model)` — see https://sqlite.org/vec1.
+### Syncing embeddings from records
 
-### Storing embeddings on your records (the pgvector workflow)
-
-The `vec_items` table stores vectors directly, but for a real app you usually want the embedding attached to a normal collection so you can CRUD it through the standard API and `expand`/`filter` on it. Do both: keep the vector as a `json` field on the record, and mirror it into the `vec1` table for search (keyed by record id).
-
-**1. Add an `embedding` `json` field to your collection** (Dashboard → collection → add field, type JSON). Example via migration:
+Keep embeddings as a `json` field on your records and mirror them into the `vec1` table automatically:
 
 ```js
-migrate((app) => {
-  const c = app.findCollectionByNameOrId("documents");
-  if (!c) return;
-  c.fields.add({ name: "embedding", type: "json" });
-  app.save(c);
-});
-```
-
-**2. Sync it into `vec_items` automatically** — add to `pb_hooks/` (e.g. `pb_hooks/embeddings.pb.js`):
-
-```js
-// keep the vec1 mirror in sync with the record's embedding field
+// pb_hooks/embeddings.pb.js
 onRecordAfterCreateSuccess((e) => {
   const emb = e.record.get("embedding");
   if (emb) {
@@ -146,46 +148,188 @@ onRecordAfterCreateSuccess((e) => {
     ).bind({ id: e.record.id, vec: JSON.stringify(emb) }).execute();
   }
 }, "documents");
-
-onRecordAfterUpdateSuccess((e) => {
-  const emb = e.record.get("embedding");
-  if (emb) {
-    e.app.db().newQuery(
-      "UPDATE vec_items SET vector = vec1_from_json({:vec}) WHERE rowid = {:id}"
-    ).bind({ id: e.record.id, vec: JSON.stringify(emb) }).execute();
-  }
-}, "documents");
-
-onRecordAfterDeleteSuccess((e) => {
-  e.app.db().newQuery("DELETE FROM vec_items WHERE rowid = {:id}")
-    .bind({ id: e.record.id }).execute();
-}, "documents");
 ```
 
-**3. Search and get full records back** — the `/api/vec/search` endpoint returns matching `rowid`s (your record ids); fetch the records with the normal API:
+For large-scale approximate nearest neighbor search, train a model with `vec1_train()` and rebuild the index — see the [vec1 documentation](https://sqlite.org/vec1) for details.
 
-```js
-const pb = new PocketBase("https://<your-app>.up.railway.app");
-const { results } = await pb.send("/api/vec/search", {
-  query: { vector: "[...embedding...]", limit: 10 },
-});
-const ids = results.map((r) => r.RowID);
-const docs = await pb.collection("documents").getFullList({
-  filter: ids.map((id) => `id = '${id}'`).join(" || "),
-});
-// docs is now ordered by KNN similarity
+---
+
+## Full-text search
+
+PocketBase's `~` filter does unindexed substring matching. It works, but it gets slow on large text fields and offers no ranking. This template adds SQLite's FTS5 engine for proper full-text search.
+
+### Usage
+
+```bash
+# Verify FTS5 is available
+curl https://<your-app>.up.railway.app/api/search/health
+
+# Search across all indexed collections
+curl "https://<your-app>.up.railway.app/api/search?q=hello+world&limit=10"
+
+# Search within a specific collection
+curl "https://<your-app>.up.railway.app/api/search?q=hello&collection=posts"
+
+# Reindex a collection (clears and rebuilds via hooks)
+curl -X POST https://<your-app>.up.railway.app/api/search/reindex \
+  -H "Content-Type: application/json" \
+  -d '{"collection": "posts", "fields": ["title", "body"]}'
 ```
 
-That's the complete pgvector workflow — store/update/delete embeddings through PocketBase like any field, and query by similarity — all inside the one service.
+Results include highlighted snippets with `<mark>` tags and BM25 relevance ranking.
+
+### How indexing works
+
+Records are automatically synced to the FTS5 index on create, update, and delete via `pb_hooks/fts.pb.js`. By default, all text and editor fields are indexed. To control which fields are indexed for a specific collection, set the `PB_FTS_CONFIG` environment variable:
+
+```bash
+PB_FTS_CONFIG='{"posts": ["title", "body"], "articles": ["headline", "content"]}'
+```
+
+---
+
+## Soft delete
+
+Deleting a record in PocketBase is permanent — it's gone. This template changes that behavior: deleting a record sets a `deleted_at` timestamp instead of removing it. The record disappears from normal queries but can be restored or permanently purged later.
+
+### API
+
+```bash
+# "Delete" a record (sets deleted_at)
+curl -X DELETE https://<your-app>.up.railway.app/api/collections/posts/records/RECORD_ID
+
+# View soft-deleted records
+curl "https://<your-app>.up.railway.app/api/trash/posts?limit=50"
+
+# Restore a record
+curl -X POST https://<your-app>.up.railway.app/api/restore/posts/RECORD_ID
+
+# Permanently delete
+curl -X DELETE https://<your-app>.up.railway.app/api/purge/posts/RECORD_ID
+```
+
+New collections automatically get a `deleted_at` field via `pb_hooks/soft_delete.pb.js`.
+
+---
+
+## Webhooks
+
+Webhooks let you configure HTTP callbacks that fire when records change — useful for triggering external services, updating CDNs, or syncing data. Unlike PocketBase's code-based hooks, these are declarative: you configure them by inserting records into the `webhooks` table, and they work without deploying custom code.
+
+### Features
+
+- HMAC-SHA256 signature verification
+- Per-collection or global event filtering
+- Custom headers
+- Automatic retries with exponential backoff
+- Delivery logging
+
+### Setup
+
+Insert a record into the `webhooks` table (via the admin UI or API):
+
+```json
+{
+  "url": "https://example.com/webhook",
+  "events": "create,update,delete",
+  "collection": "posts",
+  "secret": "your-signing-secret",
+  "headers": {"X-Custom": "value"}
+}
+```
+
+- `url` — where to send the callback
+- `events` — comma-separated list (`create`, `update`, `delete`) or `*` for all
+- `collection` — optional; omit to fire for all collections
+- `secret` — optional; used to sign payloads with HMAC-SHA256
+- `headers` — optional JSON object of additional headers
+
+### Testing and monitoring
+
+```bash
+# Send a test event
+curl -X POST https://<your-app>.up.railway.app/api/webhooks/test \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/webhook", "secret": "my-secret"}'
+
+# View recent delivery attempts
+curl "https://<your-app>.up.railway.app/api/webhooks/deliveries?webhook_id=WEBHOOK_ID"
+```
+
+---
+
+## Anonymous auth
+
+Sometimes you want to let users interact with your app before they sign up — guest shopping carts, personalized landing pages, "try before you commit" flows. This template adds anonymous authentication for that.
+
+### How it works
+
+An anonymous session creates a temporary auth record. The user gets a valid token and can interact with your app normally. When they're ready to sign up, the anonymous account is "claimed" — converted to a full account with their real email and password.
+
+### API
+
+```bash
+# Create an anonymous session
+curl -X POST https://<your-app>.up.railway.app/api/auth/anonymous
+# => {"token": "...", "record": {...}}
+
+# Claim the account (convert to a real user)
+curl -X POST https://<your-app>.up.railway.app/api/auth/anonymous/claim \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "secure123", "password_confirm": "secure123"}'
+```
+
+---
+
+## Bulk import
+
+Moving data into PocketBase usually means writing a script that loops over records and makes individual API calls. This template provides import endpoints that handle CSV and JSON files directly, with per-row error reporting so you know exactly which rows succeeded and which failed.
+
+### CSV import
+
+```bash
+curl -X POST "https://<your-app>.up.railway.app/api/import/csv?collection=posts" \
+  -F "file=@data.csv"
+```
+
+The first row is treated as headers and mapped to field names.
+
+### JSON import
+
+```bash
+curl -X POST "https://<your-app>.up.railway.app/api/import/json?collection=posts" \
+  -H "Content-Type: application/json" \
+  -d '[{"title": "Post 1"}, {"title": "Post 2"}]'
+```
+
+### Response format
+
+Both endpoints return per-row results:
+
+```json
+{
+  "collection": "posts",
+  "total": 2,
+  "imported": 1,
+  "failed": 1,
+  "results": [
+    {"row": 1, "id": "abc123", "status": "success"},
+    {"row": 2, "status": "error", "error": "..."}
+  ]
+}
+```
+
+---
+
+## Extending PocketBase
 
 ### Migrations
 
-The template ships a sample migration at `pb_migrations/20240801000000_sample_todos.js` that creates the `todos` collection and seeds it. Migrations run once (tracked in `_migrations`) and apply automatically on deploy.
+Migrations are JavaScript files that run once and are tracked in the `_migrations` table. They apply automatically on deploy.
 
-Add your own:
+Create your own:
 
-```bash
-# Name files <YYYYMMDDHHMMSS>_<description>.js
+```
 pb_migrations/20240901000000_create_projects.js
 ```
 
@@ -199,56 +343,80 @@ migrate((app) => {
 });
 ```
 
-See [JS migrations docs](https://pocketbase.io/docs/js-migrations/).
+See the [JS migrations documentation](https://pocketbase.io/docs/js-migrations/).
 
 ### Hooks
 
-`pb_hooks/examples.pb.js` ships with commented examples (a public `/api/hello` route, record hooks, validation). Uncomment, redeploy, done. See [JS hooks docs](https://pocketbase.io/docs/js-overview/).
+Hooks are JavaScript files that run on every request or record event. Place them in `pb_hooks/` and they're loaded automatically.
+
+`pb_hooks/examples.pb.js` ships with commented examples for custom routes, record validation, and logging. Uncomment what you need and redeploy.
+
+See the [JS hooks documentation](https://pocketbase.io/docs/js-overview/).
 
 ### Client SDKs
 
 ```js
 import PocketBase from "pocketbase";
 const pb = new PocketBase("https://<your-app>.up.railway.app");
-const todos = await pb.collection("todos").getFullList();
+const posts = await pb.collection("posts").getFullList();
 ```
 
-SDKs exist for JS, Dart/Flutter, and community clients for many languages.
+Official SDKs exist for JavaScript and Dart/Flutter. Community clients are available for many other languages.
 
-### Local development
+---
 
-The Dockerfile builds a custom PocketBase binary with sqlite-vec baked in (see `main.go`). To run the same thing locally you need Go 1.27+:
+## Local development
+
+The Dockerfile builds a custom PocketBase binary with the vec1 extension compiled in. To run the same setup locally, you need Go 1.27+:
 
 ```bash
-# Build the custom binary (requires Go 1.27+)
-GOTOOLCHAIN=go1.27.0 go build -tags no_default_driver \
+# Build the custom binary
+go build -tags no_default_driver \
   -ldflags "-X github.com/ncruces/go-sqlite3/driver.driverName=sqlite" \
   -o pocketbase .
 
-# Run migrations + hooks locally against ./pb_data
+# Run with migrations and hooks
 ./pocketbase serve
 ```
 
----
-
-## 🔒 Security checklist
-
-- [ ] Change `PB_ADMIN_PASSWORD` (or set `PB_SKIP_ADMIN=true` and create the superuser from the installer link).
-- [ ] Set `PB_ENCRYPTION_KEY` to a long random string.
-- [ ] Tighten collection rules (`listRule` / `createRule` / …) in the admin UI — the sample `todos` collection is wide open by design.
-- [ ] Configure a real SMTP server in **Settings → Mail** so password resets and verification emails actually send.
-- [ ] Enable the built-in **rate limiter** in Settings → Application.
+Data will be stored in `./pb_data` on your local machine.
 
 ---
 
-## How this template works
+## How it all fits together
 
-- `main.go` — a custom PocketBase launcher. It swaps the stock modernc SQLite driver for the CGO-free `ncruces/go-sqlite3` driver and registers SQLite's **vec1** vector extension on every connection (`sqlite3.AutoExtension(vec1.Register)`). It also registers the JS runtime (`jsvm`) so `pb_hooks/` and `pb_migrations/` work, and adds Go routes for `/api/vec/health` and `/api/vec/search`. Set `PB_VEC_DISABLED=1` to fall back to the stock driver.
-- `Dockerfile` — multi-stage build: stage 1 compiles the custom binary in a Go 1.27 image (`-tags no_default_driver` + ldflags driver rename), stage 2 is the same slim Alpine image as the stock template. Still one service, one container, one `pb_data` volume.
-- `pb_migrations/20250101000000_enable_vec.js` — creates and seeds the `vec_items` vec1 table (fails with a clear message if run on the stock binary).
-- `entrypoint.sh` — creates the admin superuser from env vars on first boot, then starts `pocketbase serve`.
-- `.railway/railway.ts` — Railway Infrastructure as Code (the current, supported system): declares the service, the `pocketbase-data` volume, healthcheck, and variables. Manage it with `npm run plan` / `npm run apply` (requires `railway login` + `railway link`). See [Railway IaC docs](https://docs.railway.com/infrastructure-as-code).
+| File | Purpose |
+|------|---------|
+| `main.go` | Custom PocketBase launcher. Swaps in the ncruces SQLite driver, registers the vec1 extension, loads JS hooks/migrations, and adds all the extra API routes |
+| `Dockerfile` | Multi-stage build: compiles the Go binary in stage 1, runs it in a slim Alpine container in stage 2 |
+| `entrypoint.sh` | Creates the admin superuser from environment variables, then starts PocketBase |
+| `.railway/railway.ts` | Railway Infrastructure as Code — defines the service, volume, healthcheck, and environment variables |
+| `pb_migrations/20250101000000_enable_vec.js` | Creates the vec1 virtual table for vector search |
+| `pb_migrations/20250905000000_enable_fts.js` | Creates the FTS5 virtual table for full-text search |
+| `pb_migrations/20250905000001_webhooks_table.js` | Creates tables for webhook configurations and delivery logs |
+| `pb_hooks/config.pb.js` | Syncs environment variables to PocketBase settings on every boot |
+| `pb_hooks/fts.pb.js` | Automatically indexes records in FTS5 on create, update, and delete |
+| `pb_hooks/webhooks.pb.js` | Dispatches webhook events with retry logic |
+| `pb_hooks/soft_delete.pb.js` | Automatically adds `deleted_at` field to new collections |
+
+---
+
+## Security checklist
+
+Before going to production:
+
+- [ ] Change `PB_ADMIN_PASSWORD` (or set `PB_SKIP_ADMIN=true`)
+- [ ] Set `PB_ENCRYPTION_KEY` to a long random string
+- [ ] Tighten collection rules (`listRule`, `createRule`, etc.) in the admin UI
+- [ ] Configure a real SMTP server for transactional email
+- [ ] Enable the rate limiter in Settings → Application
+
+---
 
 ## Resources
 
-- [PocketBase docs](https://pocketbase.io/docs/) · [PocketBase GitHub](https://github.com/pocketbase/pocketbase) · [Railway docs](https://docs.railway.com)
+- [PocketBase documentation](https://pocketbase.io/docs/)
+- [PocketBase GitHub](https://github.com/pocketbase/pocketbase)
+- [Railway documentation](https://docs.railway.com)
+- [SQLite vec1 extension](https://sqlite.org/vec1)
+- [SQLite FTS5](https://www.sqlite.org/fts5.html)

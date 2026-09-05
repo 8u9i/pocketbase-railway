@@ -6,7 +6,7 @@
 // This migration:
 //  1. Proves the extension is actually loaded (by creating a vec1 table).
 //  2. Creates a vec1 virtual table for ANN/KNN vector search.
-//  3. Seeds a few vectors so /api/vec/search works out of the box.
+//  3. Seeds a 768-dim vector so /api/vec/search works out of the box.
 //
 // Runs only once (tracked in _migrations), and is a no-op with a clear error
 // if someone runs it against the stock PocketBase binary.
@@ -37,23 +37,20 @@ migrate(
 
     // --- 2. Create the vec1 virtual table ----------------------------------
     // vec1 = the SQLite equivalent of a pgvector table + HNSW index.
-    db.newQuery("CREATE VIRTUAL TABLE IF NOT EXISTS vec_items USING vec1").execute();
+    // Drop existing table if it exists (to handle dimension changes)
+    db.newQuery("DROP TABLE IF EXISTS vec_items").execute();
+    db.newQuery("CREATE VIRTUAL TABLE vec_items USING vec1").execute();
 
-    // --- 3. Seed a few vectors (via vec1_from_json) ------------------------
-    const seed = [
-      { vector: "[1, 1, 1]", label: "red-ish" },
-      { vector: "[3, 3, 3]", label: "far from red" },
-      { vector: "[1.1, 0.9, 1.05]", label: "almost red" },
-    ];
-    for (const item of seed) {
-      db.newQuery(
-        "INSERT INTO vec_items(rowid, vector) VALUES (NULL, vec1_from_json({:vector}))"
-      )
-        .bind({ vector: item.vector })
-        .execute();
-    }
+    // --- 3. Seed a 768-dim vector ------------------------------------------
+    // Create a sample 768-dimensional vector (all zeros for initialization)
+    const seedVector = "[" + Array(768).fill("0.001").join(", ") + "]";
+    db.newQuery(
+      "INSERT INTO vec_items(rowid, vector) VALUES (NULL, vec1_from_json({:vector}))"
+    )
+      .bind({ vector: seedVector })
+      .execute();
 
-    console.log("==> vec_items seeded with " + seed.length + " vectors");
+    console.log("==> vec_items created with 768-dim vector support");
   },
   (app) => {
     // Rollback: drop the virtual table if the migration is reverted.
