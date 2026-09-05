@@ -35,15 +35,14 @@ migrate(
     // Drop existing table if present (allows schema changes)
     db.newQuery("DROP TABLE IF EXISTS fts_records").execute();
 
-    // Create FTS5 virtual table
-    // content='' means we store content externally (we manage it ourselves)
-    // tokenize='unicode61' handles international text, 'remove_diacritics 2' normalizes accents
+    // Create FTS5 virtual table with BM25 ranking support.
+    // collection and record_id are UNINDEXED (exact match only),
+    // title and content are full-text indexed.
     db.newQuery(`CREATE VIRTUAL TABLE fts_records USING fts5(
       collection UNINDEXED,
       record_id UNINDEXED,
       title,
       content,
-      metadata,
       tokenize='unicode61 remove_diacritics 2'
     )`).execute();
 

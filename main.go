@@ -49,6 +49,7 @@ import (
 
 	"github.com/ncruces/go-sqlite3"
 	_ "github.com/ncruces/go-sqlite3/driver" // registers driver, renamed to "sqlite" via ldflags
+	"github.com/ncruces/go-sqlite3/ext/fts5" // fts5 full-text search extension
 	"github.com/ncruces/go-sqlite3/ext/vec1" // vec1 vector extension (registered per-connection)
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
@@ -58,6 +59,7 @@ import (
 
 func init() {
 	sqlite3.AutoExtension(vec1.Register)
+	sqlite3.AutoExtension(fts5.Register)
 }
 
 func vecDBConnect(dbPath string) (*dbx.DB, error) {
